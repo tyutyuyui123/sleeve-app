@@ -1,0 +1,45 @@
+:root{--bg:#0d1b3d;--bg2:#13254f;--line:rgba(255,255,255,.10);--txt:#eef2fb;--sub:#a9b6d3;--acc:#ffd36b;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+  font-family:"Noto Sans TC","Noto Sans CJK TC","PingFang TC","Microsoft JhengHei",sans-serif;-webkit-text-size-adjust:100%}
+body{overflow:hidden}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+#top{padding:28px 16px 12px;flex:none}
+#box{position:relative}
+#q{width:100%;height:52px;border:none;border-radius:12px;background:#fff;color:#111;
+  font-size:18px;padding:0 46px 0 16px;outline:none;font-family:inherit;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+#q::placeholder{color:#b9bec8}
+#clr{position:absolute;right:6px;top:6px;width:40px;height:40px;border:none;background:none;color:#9aa1ad;font-size:26px;line-height:40px;padding:0}
+#paneWrap{position:relative;flex:1;min-height:0}
+#pane{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 16px 48px;scrollbar-width:none}
+#pane::-webkit-scrollbar{display:none}
+#track{position:absolute;top:4px;bottom:40px;right:3px;width:5px;pointer-events:none;display:none}
+#thumb{position:absolute;left:0;right:0;top:0;border-radius:3px;background:rgba(255,255,255,.38);min-height:28px}
+#ver{position:fixed;right:10px;bottom:calc(6px + env(safe-area-inset-bottom));font-size:11px;color:rgba(255,255,255,.45);pointer-events:none;letter-spacing:.5px}
+.count{font-size:13px;color:var(--sub);padding:4px 2px 8px}
+.empty{color:var(--sub);text-align:center;padding:40px 0;font-size:15px}
+.item{padding:14px 6px;border-bottom:1px solid var(--line);font-size:17px;line-height:1.4;word-break:break-word}
+.item:active{background:rgba(255,255,255,.08)}
+.info{padding:4px 2px 0}
+.name{font-size:22px;font-weight:700;line-height:1.35;margin:4px 0 14px;white-space:pre-line;word-break:break-word}
+.rec{margin-bottom:18px}
+.rech{font-size:12px;color:var(--sub);margin:0 0 8px;padding-top:12px;border-top:1px solid var(--line)}
+.rech.first{border-top:none;padding-top:0}
+.sleeves{background:var(--bg2);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+.sl{font-size:18px;line-height:1.45;padding:3px 0;word-break:break-word}
+.sl .note{display:block;font-size:14px;color:var(--acc);line-height:1.4}
+.sl.onlynote{font-size:14px;color:var(--acc)}
+.none{font-size:18px;color:var(--sub)}
+.meta{font-size:15px;color:var(--txt);margin:0 0 12px;line-height:1.6}
+.meta .sep{color:var(--sub);margin:0 6px}
+.meta b,.blk b{font-weight:400;color:var(--sub)}
+.blk{font-size:15px;line-height:1.6;margin:0 0 12px;white-space:pre-line;word-break:break-word}
+.blk b{display:block;font-size:13px}
+
+/* ---- iPhone / PWA additions ---- */
+html,body{overscroll-behavior:none}
+#app{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+#pane{padding-bottom:calc(48px + env(safe-area-inset-bottom))}
+#track{bottom:calc(40px + env(safe-area-inset-bottom))}
+#ver{right:calc(10px + env(safe-area-inset-right))}
+#q{font-size:18px} /* ≥16px so iOS Safari does not zoom on focus */
