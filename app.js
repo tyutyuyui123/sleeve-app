@@ -1,21 +1,37 @@
 (function(){
 'use strict';
-// ---- data: Firestore (public read, REST) -> localStorage cache -> bundled data.js fallback ----
+// ---- data: bundled snapshot / localStorage cache + delta sync from Firestore (public read, REST) ----
+// Local store = {at, rows}. `at` = newest server updatedAt seen (never the device clock).
+// Each launch asks Firestore only for records with updatedAt > at (1 read if nothing changed).
 var FS_PROJECT = 'sleeve-app-b369e0', FS_KEY = 'AIzaSyAEVVx1_tifxb23JifyUPcXTTji1Z2di7E';
-var FS_URL = 'https://firestore.googleapis.com/v1/projects/' + FS_PROJECT + '/databases/(default)/documents';
-var CACHE_KEY = 'sleeve.records.v1';
+var FS_URL = window.SLEEVE_FS_URL || ('https://firestore.googleapis.com/v1/projects/' + FS_PROJECT + '/databases/(default)/documents');
+var CACHE_KEY = 'sleeve.sync.v2';
 var FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes', 'sourceRow'];
-var SOURCE = 'bundled', cache = null;
-function readCache(){
-  try { var c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return c && c.recs && c.recs.length ? c : null; } catch (e) { return null; }
+try { localStorage.removeItem('sleeve.records.v1'); } catch (e) {}   // TEST 4 cache format
+var SOURCE = 'bundled', store = {at: '', map: {}};
+function loadStore(){
+  try {
+    var c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (c && c.at && c.rows && c.rows.length) { SOURCE = 'cache'; return c; }
+  } catch (e) {}
+  var b = window.SLEEVE_RECORDS;
+  SOURCE = 'bundled';
+  return b && b.rows ? {at: b.at || '', rows: b.rows} : {at: '', rows: []};
 }
-function toRecs(rows){ return rows.map(function(a){ var o = {}; for (var i = 0; i < FIELDS.length; i++) o[FIELDS[i]] = a[i]; return o; }); }
-var DATA = null;
-cache = readCache();
-if (cache && window.SleeveParse){
-  try { DATA = SleeveParse.build(toRecs(cache.recs)); SOURCE = 'cache'; } catch (e) { DATA = null; }
+function toRecs(map){
+  var out = [];
+  for (var id in map) { var a = map[id], o = {}; for (var i = 0; i < FIELDS.length; i++) o[FIELDS[i]] = a[i + 1]; out.push(o); }
+  return out;
 }
-if (!DATA) DATA = window.SLEEVE_DATA || [];
+// RFC3339 with 0/3/6/9 fraction digits -> comparable string
+function tsKey(t){ var m = /^(.*?)(?:\.(\d+))?Z$/.exec(t || ''); return m ? m[1] + '.' + ((m[2] || '') + '000000000').slice(0, 9) : ''; }
+var DATA = [];
+(function(){
+  var c = loadStore();
+  store.at = c.at;
+  for (var i = 0; i < c.rows.length; i++) store.map[c.rows[i][0]] = c.rows[i];
+  try { DATA = SleeveParse.build(toRecs(store.map)); } catch (e) { DATA = []; }
+})();
 var q = document.getElementById('q'), pane = document.getElementById('pane'),
     clr = document.getElementById('clr'), track = document.getElementById('track'), thumb = document.getElementById('thumb');
 
@@ -134,6 +150,7 @@ function fsVal(v){
   if ('integerValue' in v) return +v.integerValue;
   if ('doubleValue' in v) return v.doubleValue;
   if ('timestampValue' in v) return v.timestampValue;
+  if ('booleanValue' in v) return v.booleanValue;
   return '';
 }
 function req(url, body){
@@ -148,32 +165,41 @@ function setData(d, src){
   window.__test.data = DATA; window.__test.source = SOURCE;
   if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }  // info view stays; back re-searches new data
 }
-// Background refresh on every launch: 1 read for meta/info; download all records (~3.4k reads)
-// only when meta/info.dataVersion changed or there is no cache. Admin scripts bump dataVersion;
-// after a manual console edit, change meta/info.dataVersion too (see FIREBASE.md).
+// Background delta sync on every launch. Cost = number of changed/added/deleted records (min 1 read).
+// Without any `at` (no cache and no bundled snapshot) it downloads everything once.
 function refresh(){
   if (!window.fetch || !window.SleeveParse) return;
-  var ver = '';
   window.__test.refresh = 'checking';
-  req(FS_URL + '/meta/info').then(function(m){
-    ver = fsVal(m.fields && m.fields.dataVersion);
-    if (cache && cache.ver === ver){ window.__test.refresh = 'up-to-date'; return; }
-    return req(FS_URL + ':runQuery', {structuredQuery: {from: [{collectionId: 'records'}],
-      select: {fields: FIELDS.map(function(f){ return {fieldPath: f}; })}}}).then(function(res){
-      var rows = [];
-      for (var i = 0; i < res.length; i++){
-        var doc = res[i].document; if (!doc) continue;
-        var f = doc.fields || {}, row = [];
-        for (var j = 0; j < FIELDS.length; j++) row.push(fsVal(f[FIELDS[j]]));
-        rows.push(row);
-      }
-      if (!rows.length) throw new Error('empty');
-      var d = SleeveParse.build(toRecs(rows));
-      cache = {ver: ver, at: Date.now(), recs: rows};
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
-      setData(d, 'firestore');
-      window.__test.refresh = 'updated';
-    });
+  var sq = {from: [{collectionId: 'records'}],
+    select: {fields: FIELDS.concat(['deleted', 'updatedAt']).map(function(f){ return {fieldPath: f}; })}};
+  var full = !store.at;
+  if (!full){
+    sq.where = {fieldFilter: {field: {fieldPath: 'updatedAt'}, op: 'GREATER_THAN', value: {timestampValue: store.at}}};
+    sq.orderBy = [{field: {fieldPath: 'updatedAt'}, direction: 'ASCENDING'}];
+  }
+  req(FS_URL + ':runQuery', {structuredQuery: sq}).then(function(res){
+    var map = full ? {} : store.map, at = store.at, n = 0, changed = 0;
+    for (var i = 0; i < res.length; i++){
+      var doc = res[i].document; if (!doc) continue;
+      n++;
+      var id = doc.name.split('/').pop(), f = doc.fields || {}, up = fsVal(f.updatedAt);
+      if (up && tsKey(up) > tsKey(at)) at = up;
+      if (fsVal(f.deleted) === true){ if (map[id]) { delete map[id]; changed++; } continue; }
+      var row = [id];
+      for (var j = 0; j < FIELDS.length; j++) row.push(fsVal(f[FIELDS[j]]));
+      map[id] = row; changed++;
+    }
+    window.__test.docsRead = n;
+    if (full && !changed) throw new Error('empty');
+    var atChanged = at !== store.at;
+    store.map = map; store.at = at;
+    if (changed || atChanged || SOURCE === 'bundled'){
+      var rows = []; for (var k in map) rows.push(map[k]);
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({at: at, rows: rows})); } catch (e) {}
+    }
+    if (changed){ setData(SleeveParse.build(toRecs(map)), 'firestore'); window.__test.refresh = 'updated: ' + n + ' docs'; }
+    else window.__test.refresh = 'up-to-date';
+    window.__test.at = store.at;
   }).catch(function(e){ window.__test.refresh = 'offline: ' + e.message; });
 }
 window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE};
