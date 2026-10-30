@@ -1,6 +1,21 @@
 (function(){
 'use strict';
-var DATA = window.SLEEVE_DATA || [];
+// ---- data: Firestore (public read, REST) -> localStorage cache -> bundled data.js fallback ----
+var FS_PROJECT = 'sleeve-app-b369e0', FS_KEY = 'AIzaSyAEVVx1_tifxb23JifyUPcXTTji1Z2di7E';
+var FS_URL = 'https://firestore.googleapis.com/v1/projects/' + FS_PROJECT + '/databases/(default)/documents';
+var CACHE_KEY = 'sleeve.records.v1', MAX_AGE = 24 * 3600 * 1000;   // full re-download at least daily
+var FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes', 'sourceRow'];
+var SOURCE = 'bundled', cache = null;
+function readCache(){
+  try { var c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return c && c.recs && c.recs.length ? c : null; } catch (e) { return null; }
+}
+function toRecs(rows){ return rows.map(function(a){ var o = {}; for (var i = 0; i < FIELDS.length; i++) o[FIELDS[i]] = a[i]; return o; }); }
+var DATA = null;
+cache = readCache();
+if (cache && window.SleeveParse){
+  try { DATA = SleeveParse.build(toRecs(cache.recs)); SOURCE = 'cache'; } catch (e) { DATA = null; }
+}
+if (!DATA) DATA = window.SLEEVE_DATA || [];
 var q = document.getElementById('q'), pane = document.getElementById('pane'),
     clr = document.getElementById('clr'), track = document.getElementById('track'), thumb = document.getElementById('thumb');
 
@@ -9,7 +24,8 @@ function norm(s){
   if (s.normalize) s = s.normalize('NFKC');
   return s.toLowerCase().replace(/[\s\u00a0\u3000]+/g, '');
 }
-for (var i = 0; i < DATA.length; i++) DATA[i].k = norm(DATA[i].n);
+function addKeys(d){ for (var i = 0; i < d.length; i++) d[i].k = norm(d[i].n); return d; }
+addKeys(DATA);
 
 function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
@@ -112,6 +128,54 @@ window.onBack = function(){
   if (mode === 'info'){ renderList(true); return true; }
   return false;
 };
-window.__test = {showInfo: showInfo, search: search, data: DATA};
+function fsVal(v){
+  if (!v) return '';
+  if ('stringValue' in v) return v.stringValue;
+  if ('integerValue' in v) return +v.integerValue;
+  if ('doubleValue' in v) return v.doubleValue;
+  if ('timestampValue' in v) return v.timestampValue;
+  return '';
+}
+function req(url, body){
+  var opt = body ? {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)} : {};
+  opt.cache = 'no-store';
+  return fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + 'key=' + FS_KEY, opt).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+  });
+}
+function setData(d, src){
+  DATA = addKeys(d); SOURCE = src;
+  window.__test.data = DATA; window.__test.source = SOURCE;
+  if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }  // info view stays; back re-searches new data
+}
+// Background refresh on every launch: 1 read for meta/info; download all records only when the
+// data version changed (or the cache is over a day old / missing).
+function refresh(){
+  if (!window.fetch || !window.SleeveParse) return;
+  var ver = '';
+  window.__test.refresh = 'checking';
+  req(FS_URL + '/meta/info').then(function(m){
+    ver = fsVal(m.fields && m.fields.dataVersion);
+    if (cache && cache.ver === ver && Date.now() - cache.at < MAX_AGE){ window.__test.refresh = 'up-to-date'; return; }
+    return req(FS_URL + ':runQuery', {structuredQuery: {from: [{collectionId: 'records'}],
+      select: {fields: FIELDS.map(function(f){ return {fieldPath: f}; })}}}).then(function(res){
+      var rows = [];
+      for (var i = 0; i < res.length; i++){
+        var doc = res[i].document; if (!doc) continue;
+        var f = doc.fields || {}, row = [];
+        for (var j = 0; j < FIELDS.length; j++) row.push(fsVal(f[FIELDS[j]]));
+        rows.push(row);
+      }
+      if (!rows.length) throw new Error('empty');
+      var d = SleeveParse.build(toRecs(rows));
+      cache = {ver: ver, at: Date.now(), recs: rows};
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
+      setData(d, 'firestore');
+      window.__test.refresh = 'updated';
+    });
+  }).catch(function(e){ window.__test.refresh = 'offline: ' + e.message; });
+}
+window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE};
 renderList(false);
+refresh();
 })();
