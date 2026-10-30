@@ -3,7 +3,7 @@
 // ---- data: Firestore (public read, REST) -> localStorage cache -> bundled data.js fallback ----
 var FS_PROJECT = 'sleeve-app-b369e0', FS_KEY = 'AIzaSyAEVVx1_tifxb23JifyUPcXTTji1Z2di7E';
 var FS_URL = 'https://firestore.googleapis.com/v1/projects/' + FS_PROJECT + '/databases/(default)/documents';
-var CACHE_KEY = 'sleeve.records.v1', MAX_AGE = 24 * 3600 * 1000;   // full re-download at least daily
+var CACHE_KEY = 'sleeve.records.v1';
 var FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes', 'sourceRow'];
 var SOURCE = 'bundled', cache = null;
 function readCache(){
@@ -148,15 +148,16 @@ function setData(d, src){
   window.__test.data = DATA; window.__test.source = SOURCE;
   if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }  // info view stays; back re-searches new data
 }
-// Background refresh on every launch: 1 read for meta/info; download all records only when the
-// data version changed (or the cache is over a day old / missing).
+// Background refresh on every launch: 1 read for meta/info; download all records (~3.4k reads)
+// only when meta/info.dataVersion changed or there is no cache. Admin scripts bump dataVersion;
+// after a manual console edit, change meta/info.dataVersion too (see FIREBASE.md).
 function refresh(){
   if (!window.fetch || !window.SleeveParse) return;
   var ver = '';
   window.__test.refresh = 'checking';
   req(FS_URL + '/meta/info').then(function(m){
     ver = fsVal(m.fields && m.fields.dataVersion);
-    if (cache && cache.ver === ver && Date.now() - cache.at < MAX_AGE){ window.__test.refresh = 'up-to-date'; return; }
+    if (cache && cache.ver === ver){ window.__test.refresh = 'up-to-date'; return; }
     return req(FS_URL + ':runQuery', {structuredQuery: {from: [{collectionId: 'records'}],
       select: {fields: FIELDS.map(function(f){ return {fieldPath: f}; })}}}).then(function(res){
       var rows = [];
