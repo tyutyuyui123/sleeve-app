@@ -18,6 +18,7 @@
 <body>
 <div id="app">
   <div id="top">
+    <div id="auth"></div>
     <div id="box">
       <input id="q" type="text" placeholder="請輸入桌遊名稱" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
       <button id="clr" type="button" aria-label="清除" hidden>×</button>
@@ -28,7 +29,9 @@
     <div id="track"><div id="thumb"></div></div>
   </div>
 </div>
-<div id="ver">TEST 5</div>
+<div id="scr" hidden></div>
+<div id="modal" hidden><div id="mbox"><input id="mcode" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"><button id="mok" type="button">OK</button></div></div>
+<div id="ver">TEST 6</div>
 <script src="data.js"></script>
 <script src="sleeveparse.js"></script>
 <script src="app.js"></script>

@@ -43,3 +43,41 @@ html,body{overscroll-behavior:none}
 #track{bottom:calc(40px + env(safe-area-inset-bottom))}
 #ver{right:calc(10px + env(safe-area-inset-right))}
 #q{font-size:18px} /* ≥16px so iOS Safari does not zoom on focus */
+
+/* ---- TEST 6: login bar, form screens, code popup ---- */
+#top{padding-top:10px}
+#auth{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-height:36px;margin-bottom:10px}
+#auth .nick{flex:1;min-width:0;font-size:16px;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.06);color:var(--txt);font-size:15px;font-family:inherit;flex:none}
+.btn:active{background:rgba(255,255,255,.16)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#1b1b1b;font-weight:700}
+.btn.dng{border-color:#ff8a8a;color:#ffb3b3}
+.btn:disabled{opacity:.5}
+.acts{display:flex;gap:12px;justify-content:flex-end;margin:6px 0 4px}
+.acts .btn{height:40px;padding:0 20px}
+#scr{position:fixed;inset:0;z-index:20;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
+#scr[hidden],#modal[hidden]{display:none}
+.shead{display:flex;align-items:center;gap:12px;margin:0 0 16px}
+.shead h2{margin:0;font-size:20px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fld{margin:0 0 14px}
+.fld label{display:block;font-size:14px;color:var(--sub);margin:0 0 6px}
+.fld label i{font-style:normal;color:var(--acc)}
+.fld input,.fld textarea{display:block;width:100%;border:2px solid transparent;border-radius:10px;background:#fff;color:#111;font-size:17px;font-family:inherit;padding:10px 12px;outline:none}
+.fld input{height:48px}
+.fld textarea{min-height:96px;resize:vertical;line-height:1.45}
+.fld textarea.big{min-height:140px}
+.fld input:focus,.fld textarea:focus{border-color:var(--acc)}
+.fld.bad input,.fld.bad textarea{border-color:#ff6b6b}
+.fld .msg{font-size:13px;color:#ff9b9b;margin-top:5px;min-height:0}
+.fld .hint{font-size:12px;color:var(--sub);margin-top:5px}
+.fmsg{font-size:15px;color:#ff9b9b;margin:4px 0 12px;min-height:20px}
+.fbtn{width:100%;height:50px;font-size:17px}
+#modal{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+#mbox{display:flex;gap:10px;background:var(--bg2);border-radius:14px;padding:16px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#mcode{flex:1;min-width:0;height:48px;border:2px solid transparent;border-radius:10px;background:#fff;color:#111;font-size:18px;padding:0 12px;outline:none;font-family:inherit}
+#mcode.bad{border-color:#ff6b6b}
+#mok{height:48px;padding:0 18px;border:none;border-radius:10px;background:var(--acc);color:#1b1b1b;font-size:17px;font-weight:700;font-family:inherit}
+#mok:disabled{opacity:.5}
+.shake{animation:shake .35s}
+@keyframes shake{20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}

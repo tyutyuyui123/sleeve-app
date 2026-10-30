@@ -160,7 +160,7 @@ function build(records){
     var x = records[i], name = cell(x.name);
     if (!name) continue;
     var pb = parseB(x.sleeves);
-    var rec = {row: x.sourceRow};
+    var rec = {row: x.sourceRow, id: x.id};
     if (pb.none) rec.none = true;
     var items = pb.items.map(function(it){ return [frontStyle(it[0]), frontStyle(it[1])]; });
     if (items.length) rec.items = items;
@@ -172,6 +172,19 @@ function build(records){
   }
   return out;
 }
-root.SleeveParse = {build: build, parseB: parseB, frontStyle: frontStyle};
+// Editable form of a raw 牌套 cell: one sleeve per line in "WxH(count)" notation when that
+// renders exactly like the stored value; otherwise the "*"->"x" form, otherwise the raw text.
+function editForm(raw){
+  raw = raw === null || raw === undefined ? '' : String(raw);
+  var want = JSON.stringify(parseB(raw)), pb = parseB(raw), lines = [], ok = !pb.none && pb.items.length > 0;
+  for (var i = 0; ok && i < pb.items.length; i++){
+    var k = /^(\d+(?:\.\d+)?) × (\d+(?:\.\d+)?)(?:（(\d+) 張）)?$/.exec(pb.items[i][0]);
+    if (!k || pb.items[i][1]) ok = false; else lines.push(k[1] + 'x' + k[2] + (k[3] ? '(' + k[3] + ')' : ''));
+  }
+  if (ok && JSON.stringify(parseB(lines.join('\n'))) === want) return lines.join('\n');
+  var f = frontStyle(raw);
+  return JSON.stringify(parseB(f)) === want ? f : raw;
+}
+root.SleeveParse = {build: build, parseB: parseB, frontStyle: frontStyle, editForm: editForm};
 if (typeof module !== 'undefined') module.exports = root.SleeveParse;
 })(typeof window !== 'undefined' ? window : globalThis);

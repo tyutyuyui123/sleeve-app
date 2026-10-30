@@ -1,5 +1,5 @@
 // 牌套精靈 service worker: precache everything, serve cache-first so it works fully offline.
-const CACHE = 'sleeve-test5-v1';
+const CACHE = 'sleeve-test6-v1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'sleeveparse.js', 'data.js', 'manifest.webmanifest',
   'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 self.addEventListener('install', e => {
