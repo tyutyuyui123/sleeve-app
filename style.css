@@ -67,6 +67,7 @@ html,body{overscroll-behavior:none}
 .fld input{height:48px}
 .fld textarea{min-height:96px;resize:vertical;line-height:1.45}
 .fld textarea.big{min-height:140px}
+.fld textarea.codes{min-height:64px;font-variant-numeric:tabular-nums}
 .fld input:focus,.fld textarea:focus{border-color:var(--acc)}
 .fld.bad input,.fld.bad textarea{border-color:#ff6b6b}
 .fld .msg{font-size:13px;color:#ff9b9b;margin-top:5px;min-height:0}
@@ -81,3 +82,14 @@ html,body{overscroll-behavior:none}
 #mok:disabled{opacity:.5}
 .shake{animation:shake .35s}
 @keyframes shake{20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+/* ---- TEST 7: barcode scanner ---- */
+#scan{position:fixed;inset:0;z-index:30;background:#000;overflow:hidden}
+#scan[hidden]{display:none}
+#scanv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#scan .shead{position:absolute;left:0;right:0;top:0;margin:0;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;background:linear-gradient(rgba(0,0,0,.65),rgba(0,0,0,0))}
+#scanframe{position:absolute;left:50%;top:45%;width:min(80vw,420px);height:min(34vw,180px);transform:translate(-50%,-50%);
+  border:3px solid var(--acc);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.42)}
+#scanframe i{position:absolute;left:8%;right:8%;top:50%;height:2px;background:rgba(255,90,90,.85);animation:scanline 1.6s ease-in-out infinite alternate}
+@keyframes scanline{from{transform:translateY(-60px)}to{transform:translateY(60px)}}
+#scanmsg{position:absolute;left:16px;right:16px;bottom:calc(48px + env(safe-area-inset-bottom));text-align:center;font-size:17px;color:#fff;text-shadow:0 1px 3px #000}
+#scanmsg.err{color:#ffb3b3}

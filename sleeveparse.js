@@ -129,7 +129,9 @@ function splitSpace(seg){
 }
 function parseB(raw){
   var s = cell(raw);
-  if (s === '' || NONE_WORDS[s]) return {none: true, items: []};
+  // Empty cell = no sleeve info (show nothing); only explicit x / 無 / 無須牌套… mean 無須牌套.
+  if (s === '') return {none: false, items: []};
+  if (NONE_WORDS[s]) return {none: true, items: []};
   if (s === '?' || s === '？') return {none: false, items: [['[?]', '']]};
   var m = /^([xX無])\s*([(（].*[)）])$/.exec(s);
   if (m) return {none: true, items: [['', cleanNote(m[2].slice(1, -1))]]};
@@ -161,6 +163,7 @@ function build(records){
     if (!name) continue;
     var pb = parseB(x.sleeves);
     var rec = {row: x.sourceRow, id: x.id};
+    if (x.barcodes && x.barcodes.length && typeof x.barcodes !== 'string') rec.bc = x.barcodes;
     if (pb.none) rec.none = true;
     var items = pb.items.map(function(it){ return [frontStyle(it[0]), frontStyle(it[1])]; });
     if (items.length) rec.items = items;

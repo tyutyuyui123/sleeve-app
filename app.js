@@ -5,9 +5,9 @@
 // Each launch asks Firestore only for records with updatedAt > at (1 read if nothing changed).
 var FS_PROJECT = 'sleeve-app-b369e0', FS_KEY = 'AIzaSyAEVVx1_tifxb23JifyUPcXTTji1Z2di7E';
 var FS_URL = window.SLEEVE_FS_URL || ('https://firestore.googleapis.com/v1/projects/' + FS_PROJECT + '/databases/(default)/documents');
-var CACHE_KEY = 'sleeve.sync.v2';
-var FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes', 'sourceRow'];
-try { localStorage.removeItem('sleeve.records.v1'); } catch (e) {}   // TEST 4 cache format
+var CACHE_KEY = 'sleeve.sync.v3';   // v3 (TEST 7): rows carry barcodes; older caches are dropped and rebuilt from data.js
+var FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes', 'sourceRow', 'barcodes'];
+try { localStorage.removeItem('sleeve.records.v1'); localStorage.removeItem('sleeve.sync.v2'); } catch (e) {}   // older cache formats
 var SOURCE = 'bundled', store = {at: '', map: {}};
 function loadStore(){
   try {
@@ -58,13 +58,23 @@ function search(text){
   return pre.concat(mid);
 }
 
+var codeView = null;   // {code, idxs}: result of the last scan, shown while the search box is empty
 function renderList(keepScroll){
   mode = 'list';
   var text = q.value;
   clr.hidden = !text;
   lastResults = search(text);
   var h = '';
-  if (norm(text)){
+  if (codeView && !norm(text)){
+    lastResults = codeView.idxs;
+    if (!lastResults.length) h = '<div class="empty">查無此條碼：' + esc(codeView.code) + '</div>';
+    else {
+      h = '<div class="count">條碼 ' + esc(codeView.code) + ' 共 ' + lastResults.length + ' 筆</div>';
+      for (var j0 = 0; j0 < lastResults.length; j0++)
+        h += '<div class="item" data-i="' + lastResults[j0] + '">' + esc(DATA[lastResults[j0]].n.replace(/\n/g, ' ')) + '</div>';
+    }
+  }
+  else if (norm(text)){
     if (!lastResults.length) h = '<div class="empty">找不到符合的桌遊</div>';
     else {
       h = '<div class="count">共 ' + lastResults.length + ' 筆</div>';
@@ -83,15 +93,17 @@ function fmtAge(d){ return /^\d+$/.test(d) ? d + '+' : d; }
 function fmtTime(e){ var t = e.replace(/\s+/g, ''); return /^\d+(-\d+)?$/.test(t) ? t + ' 分鐘' : e; }
 
 function renderRec(r){
-  var h = '<div class="sleeves">';
+  var h = '';
   var items = r.items || [];
+  // Empty 牌套 cell -> no sleeve box at all (not 無須牌套).
+  if (r.none || items.length) h += '<div class="sleeves">';
   if (r.none) h += '<div class="sl none">無須牌套</div>';
   for (var i = 0; i < items.length; i++){
     var m = items[i][0], n = items[i][1];
     if (m) h += '<div class="sl">' + esc(m) + (n ? '<span class="note">' + esc(n) + '</span>' : '') + '</div>';
     else if (n) h += '<div class="sl onlynote">' + esc(n) + '</div>';
   }
-  h += '</div>';
+  if (r.none || items.length) h += '</div>';
   var meta = [];
   if (r.c) meta.push('<b>人數</b> ' + esc(r.c));
   if (r.d) meta.push('<b>年齡</b> ' + esc(fmtAge(r.d)));
@@ -120,8 +132,8 @@ function showInfo(idx, keepListScroll){
 }
 
 // Only real user edits fire 'input'; we never change q.value programmatically while info is shown.
-q.addEventListener('input', function(){ renderList(false); });
-clr.addEventListener('click', function(){ q.value = ''; renderList(false); q.focus(); });
+q.addEventListener('input', function(){ codeView = null; renderList(false); });
+clr.addEventListener('click', function(){ q.value = ''; codeView = null; renderList(false); q.focus(); });
 q.addEventListener('keydown', function(e){ if (e.key === 'Enter') q.blur(); });
 pane.addEventListener('click', function(e){
   var t = e.target.closest ? e.target.closest('.item') : null;
@@ -144,6 +156,7 @@ window.addEventListener('resize', updateBar);
 
 // Called by the Android activity on back press. Returns true if handled.
 window.onBack = function(){
+  if (scanEl && !scanEl.hidden){ closeScanner(); return true; }
   if (!modal.hidden){ closeModal(); return true; }
   if (!scr.hidden){ closeScreen(); return true; }
   if (mode === 'info'){ renderList(true); return true; }
@@ -156,6 +169,7 @@ function fsVal(v){
   if ('doubleValue' in v) return v.doubleValue;
   if ('timestampValue' in v) return v.timestampValue;
   if ('booleanValue' in v) return v.booleanValue;
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(fsVal);
   return '';
 }
 function req(url, body){
@@ -167,6 +181,7 @@ function req(url, body){
 }
 function setData(d, src){
   DATA = addKeys(d); SOURCE = src;
+  if (codeView) codeView.idxs = findCode(codeView.code);   // indexes changed
   window.__test.data = DATA; window.__test.source = SOURCE;
   if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }  // info view stays; back re-searches new data
 }
@@ -222,13 +237,14 @@ function setAuth(a){
 }
 function renderAuth(){
   authEl.innerHTML = auth
-    ? '<span class="nick">' + esc(auth.nickname) + '</span><button class="btn" type="button" data-a="logout">登出</button><button class="btn pri" type="button" data-a="add">新增</button>'
-    : '<button class="btn" type="button" data-a="register">註冊</button><button class="btn pri" type="button" data-a="login">登入</button>';
+    ? '<span class="nick">' + esc(auth.nickname) + '</span>' + SCAN_BTN + '<button class="btn" type="button" data-a="logout">登出</button><button class="btn pri" type="button" data-a="add">新增</button>'
+    : SCAN_BTN + '<button class="btn" type="button" data-a="register">註冊</button><button class="btn pri" type="button" data-a="login">登入</button>';
 }
 authEl.addEventListener('click', function(e){
   var b = e.target.closest ? e.target.closest('[data-a]') : null; if (!b) return;
   var a = b.getAttribute('data-a');
-  if (a === 'register') openRegister(); else if (a === 'login') openLogin(); else if (a === 'add') openEdit(null);
+  if (a === 'scan') openScanner();
+  else if (a === 'register') openRegister(); else if (a === 'login') openLogin(); else if (a === 'add') openEdit(null);
   else if (a === 'logout') { var t = auth && auth.token; setAuth(null); if (t) callFn('logout', {token: t}).catch(function(){}); }
 });
 function actsHtml(r){
@@ -252,6 +268,8 @@ function errText(e){
   if (m === 'login-required') return '登入已失效，請重新登入';
   if (m === 'not-found') return '這筆資料已不存在';
   if (m === 'name-required') return '請輸入遊戲名稱';
+  if (m === 'bad-barcode') return '條碼號碼只能是 8–14 位數字';
+  if (m === 'too-many-barcodes') return '條碼號碼最多 ' + MAX_CODES + ' 個';
   if (/^too-long:/.test(m)) return '「' + LABELS[m.slice(9)] + '」太長了';
   return '操作失敗，請稍後再試';
 }
@@ -335,15 +353,29 @@ function doLogin(){
 // ---- add / edit ----
 var LABELS = {name: '遊戲名稱', sleeves: '牌套資訊', players: '人數', age: '年齡', time: '時間', accessories: '額外配件', notes: '備註'};
 var EDIT_FIELDS = ['name', 'sleeves', 'players', 'age', 'time', 'accessories', 'notes'];
-var editing = null;   // {id, raw:{}, base:{}}
+var editing = null;   // {id, raw:{}, base:{}, codes:[]}
+// 條碼號碼: one box, several codes split by comma / space / newline -> array of digit strings (8–14 digits, max MAX_CODES).
+var MAX_CODES = 10;
+function parseCodes(text){
+  var parts = String(text || '').split(/[\s,，、;；]+/), out = [];
+  for (var i = 0; i < parts.length; i++){
+    var c = parts[i]; if (!c) continue;
+    if (!/^\d{8,14}$/.test(c)) return {err: '「' + c + '」不是有效的條碼號碼（只能是 8–14 位數字）'};
+    if (out.indexOf(c) < 0) out.push(c);
+  }
+  if (out.length > MAX_CODES) return {err: '條碼號碼最多 ' + MAX_CODES + ' 個'};
+  return {codes: out};
+}
 function openEdit(id){
   var raw = {}, row = id ? store.map[id] : null;
   if (id && !row) return;
   for (var i = 0; i < EDIT_FIELDS.length; i++) raw[EDIT_FIELDS[i]] = row ? String(row[i + 1] == null ? '' : row[i + 1]) : '';
-  editing = {id: id, raw: raw, base: {}};
+  var codes = row && row[9] && typeof row[9] !== 'string' ? row[9].slice() : [];
+  editing = {id: id, raw: raw, base: {}, codes: codes};
   openScreen(id ? 'edit' : 'add', head(id ? '更改資料' : '新增遊戲') +
     fld('e_name', '遊戲名稱 <i>（必填）</i>', 'text', 'maxlength="100"') +
-    fld('e_sleeves', '牌套資訊', 'textarea', 'class="big" maxlength="1000" placeholder="每行一種，例如：63.5x88(50)"', '每行一種牌套，格式：寬x高(張數)；不需牌套請填「x」') +
+    fld('e_sleeves', '牌套資訊', 'textarea', 'class="big" maxlength="1000" placeholder="每行一種，例如：63.5x88(50)"', '每行一種牌套，格式：寬x高(張數)；不需牌套請填「x」；不清楚就留空') +
+    fld('e_barcodes', '條碼號碼', 'textarea', 'class="codes" inputmode="numeric" maxlength="200" placeholder="例如：4710000000001"', '只填數字；多個條碼用逗號、空白或換行分開；沒有就留空') +
     fld('e_players', '人數', 'text', 'maxlength="50"') +
     fld('e_age', '年齡', 'text', 'maxlength="50"') +
     fld('e_time', '時間', 'text', 'maxlength="50"') +
@@ -355,6 +387,8 @@ function openEdit(id){
     el.value = k === 'sleeves' && window.SleeveParse.editForm ? SleeveParse.editForm(raw[k]) : raw[k];
     editing.base[k] = el.value;   // what the field shows before the user touches it
   }
+  $('e_barcodes').value = codes.join('\n');
+  $('e_barcodes').oninput = function(){ setMsg('e_barcodes', ''); };
 }
 function collect(){
   var f = {};
@@ -366,8 +400,12 @@ function collect(){
 }
 function doSave(){
   setMsg('e_name', ''); formMsg('');
+  setMsg('e_barcodes', '');
   if (!$('e_name').value.trim()) { setMsg('e_name', '請輸入遊戲名稱'); $('e_name').focus(); return; }
+  var pc = parseCodes($('e_barcodes').value);
+  if (pc.err) { setMsg('e_barcodes', pc.err); $('e_barcodes').focus(); return; }
   var f = collect();
+  f.barcodes = pc.codes;
   if (!editing.id){
     busy(true);
     callFn('addRecord', {token: auth && auth.token, fields: f}).then(function(r){ return afterWrite(r.id, 'info'); }, function(e){ busy(false); writeFail(e); });
@@ -424,8 +462,182 @@ mok.addEventListener('click', modalOk);
 mcode.addEventListener('keydown', function(e){ if (e.key === 'Enter') modalOk(); });
 mcode.addEventListener('input', function(){ mcode.className = ''; });
 modal.addEventListener('click', function(e){ if (e.target === modal) closeModal(); });
+// ---- TEST 7: barcode scanner (rear camera, full screen). Works offline:
+// BarcodeDetector (built into Android Chrome/WebView) when it supports EAN/UPC; otherwise the bundled
+// ZXing decoder (zxing.min.js, loaded only when needed, precached by the PWA service worker).
+var SCAN_BTN = '<button class="btn" type="button" data-a="scan">掃條碼</button>';
+var SCAN_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'];
+var scanEl = null, scanState = {engine: '', stream: null, timer: 0, busy: false, gen: 0, last: ''};
+function digitsOnly(s){ return String(s || '').replace(/\D/g, ''); }
+// UPC-E (8 digits incl. number system + check) -> UPC-A (12 digits)
+function upcEtoA(e){
+  if (!/^[01]\d{7}$/.test(e)) return '';
+  var d = e.split(''), l = d[6], m, p;
+  if (l < '3') { m = d[1] + d[2] + l + '00'; p = '00' + d[3] + d[4] + d[5]; }
+  else if (l === '3') { m = d[1] + d[2] + d[3] + '00'; p = '000' + d[4] + d[5]; }
+  else if (l === '4') { m = d[1] + d[2] + d[3] + d[4] + '0'; p = '0000' + d[5]; }
+  else { m = d[1] + d[2] + d[3] + d[4] + d[5]; p = '0000' + l; }
+  return d[0] + m + p + d[7];
+}
+// All spellings of one code that may be stored (UPC-A 12 digits <-> EAN-13 with a leading 0, UPC-E -> UPC-A).
+function codeKeys(code, fmt){
+  var c = String(code || '').trim(), k = [c], dg = digitsOnly(c);
+  if (dg && dg === c){
+    if (dg.length === 8 && fmt === 'upc_e') { var a = upcEtoA(dg); if (a) k.push(a, '0' + a); }
+    if (dg.length === 12) k.push('0' + dg);
+    if (dg.length === 13 && dg[0] === '0') k.push(dg.slice(1));
+  }
+  return k;
+}
+// -> DATA indexes of the games that have this barcode
+function findCode(code, fmt){
+  var keys = codeKeys(code, fmt), out = [];
+  for (var i = 0; i < DATA.length; i++){
+    var r = DATA[i].r, hit = false;
+    for (var j = 0; j < r.length && !hit; j++)
+      if (r[j].bc) for (var k = 0; k < keys.length; k++) if (r[j].bc.indexOf(keys[k]) >= 0) { hit = true; break; }
+    if (hit) out.push(i);
+  }
+  return out;
+}
+// A code was read: back to the main screen; 1 game -> its info, several -> their list, none -> message.
+function onCode(code, fmt){
+  closeScanner();
+  closeScreen();
+  code = String(code || '').trim();
+  var idxs = findCode(code, fmt);
+  listScroll = 0;
+  if (idxs.length === 1){
+    codeView = null;
+    q.value = DATA[idxs[0]].n.replace(/\n/g, ' ');
+    renderList(false);
+    showInfo(idxs[0], true);
+  } else {
+    codeView = {code: code, idxs: idxs};
+    q.value = '';
+    renderList(false);
+    q.blur();
+  }
+  window.__test.lastCode = {code: code, fmt: fmt || '', matches: idxs.length};
+}
+function scanMsg(t, err){ var m = document.getElementById('scanmsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } }
+function buildScanner(){
+  scanEl = document.createElement('div');
+  scanEl.id = 'scan'; scanEl.hidden = true;
+  scanEl.innerHTML = '<video id="scanv" playsinline muted autoplay></video><div id="scanframe"><i></i></div>' +
+    '<div class="shead"><button class="btn" type="button" data-x="back">退回</button><h2>掃條碼</h2></div>' +
+    '<div id="scanmsg"></div>';
+  document.body.appendChild(scanEl);
+  scanEl.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('[data-x]') : null;
+    if (b) closeScanner();
+  });
+}
+function openScanner(){
+  if (!scanEl) buildScanner();
+  if (!scanEl.hidden) return;
+  q.blur(); closeModal();
+  scanEl.hidden = false;
+  var gen = ++scanState.gen;
+  scanState.last = '';
+  scanMsg('正在開啟相機…');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ scanMsg('這個裝置無法使用相機掃描', true); return; }
+  var video = document.getElementById('scanv');
+  navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}, height: {ideal: 720}}})
+    .then(function(stream){
+      if (gen !== scanState.gen || scanEl.hidden){ stopStream(stream); return; }
+      scanState.stream = stream;
+      video.srcObject = stream;
+      var p = video.play(); if (p && p.catch) p.catch(function(){});
+      return pickEngine().then(function(engine){
+        if (gen !== scanState.gen || scanEl.hidden) return;
+        if (!engine){ scanMsg('無法載入條碼辨識功能', true); return; }
+        scanState.engine = engine.name;
+        scanMsg('將條碼對準框內');
+        loop(engine, video, gen);
+      });
+    })
+    .catch(function(e){
+      if (gen !== scanState.gen) return;
+      var n = e && e.name;
+      scanMsg(n === 'NotAllowedError' || n === 'SecurityError' ? '沒有相機權限，請到設定允許「相機」後再試'
+        : n === 'NotFoundError' || n === 'OverconstrainedError' ? '找不到相機' : '無法開啟相機', true);
+    });
+}
+function stopStream(st){ if (st) st.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); }
+function closeScanner(){
+  if (!scanEl || scanEl.hidden) return;
+  scanState.gen++;
+  clearTimeout(scanState.timer);
+  stopStream(scanState.stream); scanState.stream = null;
+  var v = document.getElementById('scanv'); if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; }
+  scanEl.hidden = true;
+}
+document.addEventListener('visibilitychange', function(){ if (document.hidden) closeScanner(); });
+// Detection engines: {name, detect(video) -> Promise<{code, fmt}|null>}
+var zxingLoad = null;
+function pickEngine(){
+  if (window.BarcodeDetector && BarcodeDetector.getSupportedFormats){
+    return BarcodeDetector.getSupportedFormats().then(function(sup){
+      var f = SCAN_FORMATS.filter(function(x){ return sup.indexOf(x) >= 0; });
+      if (f.indexOf('ean_13') < 0) return zxingEngine();
+      var det = new BarcodeDetector({formats: f});
+      return {name: 'BarcodeDetector', detect: function(v){
+        return det.detect(v).then(function(res){ return res && res.length ? {code: res[0].rawValue, fmt: res[0].format} : null; });
+      }};
+    }, zxingEngine);
+  }
+  return zxingEngine();
+}
+function zxingEngine(){
+  if (!zxingLoad) zxingLoad = new Promise(function(ok, bad){
+    if (window.ZXing) return ok();
+    var s = document.createElement('script'); s.src = 'zxing.min.js';
+    s.onload = function(){ ok(); }; s.onerror = function(){ zxingLoad = null; bad(new Error('zxing')); };
+    document.head.appendChild(s);
+  });
+  return zxingLoad.then(function(){
+    var Z = window.ZXing, hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    var reader = new Z.MultiFormatReader(); reader.setHints(hints);
+    var cv = document.createElement('canvas'), cx = cv.getContext('2d', {willReadFrequently: true});
+    var FMT = {}; FMT[Z.BarcodeFormat.EAN_13] = 'ean_13'; FMT[Z.BarcodeFormat.EAN_8] = 'ean_8'; FMT[Z.BarcodeFormat.UPC_A] = 'upc_a';
+    FMT[Z.BarcodeFormat.UPC_E] = 'upc_e'; FMT[Z.BarcodeFormat.CODE_128] = 'code_128';
+    return {name: 'ZXing', detect: function(v){
+      var w = v.videoWidth, h = v.videoHeight;
+      if (!w || !h) return Promise.resolve(null);
+      var sc = Math.min(1, 960 / w); cv.width = Math.round(w * sc); cv.height = Math.round(h * sc);
+      cx.drawImage(v, 0, 0, cv.width, cv.height);
+      try {
+        var bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)));
+        var r = reader.decodeWithState(bmp);
+        return Promise.resolve({code: r.getText(), fmt: FMT[r.getBarcodeFormat()] || ''});
+      } catch (e) { reader.reset(); return Promise.resolve(null); }
+    }};
+  }, function(){ return null; });
+}
+function loop(engine, video, gen){
+  if (gen !== scanState.gen) return;
+  var p = video.readyState >= 2 ? engine.detect(video) : Promise.resolve(null);
+  p.then(function(r){
+    if (gen !== scanState.gen) return;
+    if (r && r.code && validCode(r.code, r.fmt)) { onCode(r.code, r.fmt); return; }
+    scanState.timer = setTimeout(function(){ loop(engine, video, gen); }, 120);
+  }, function(){ if (gen === scanState.gen) scanState.timer = setTimeout(function(){ loop(engine, video, gen); }, 300); });
+}
+// EAN/UPC check digit (ZXing and BarcodeDetector already verify it; this guards against odd engines)
+function validCode(c, fmt){
+  if (fmt === 'code_128') return String(c).trim().length > 0;
+  if (fmt === 'upc_e') return /^\d{8}$/.test(c) && validCode(upcEtoA(c) || '1', 'upc_a');
+  if (!/^\d{8}$|^\d{12,13}$/.test(c)) return !fmt && String(c).trim().length > 0;
+  var s = 0, n = c.length;
+  for (var i = 0; i < n - 1; i++) s += (+c[n - 2 - i]) * (i % 2 ? 1 : 3);
+  return (10 - s % 10) % 10 === +c[n - 1];
+}
 renderAuth();
-window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); }};
+window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); },
+  onCode: onCode, findCode: findCode, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA};
 renderList(false);
 refresh();
 })();
