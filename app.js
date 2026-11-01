@@ -156,6 +156,7 @@ window.addEventListener('resize', updateBar);
 
 // Called by the Android activity on back press. Returns true if handled.
 window.onBack = function(){
+  if (dialogOpen()){ dialogAnswer(document.querySelector('#sdlg [data-d=no]') ? 'no' : 'ok'); return true; }
   if (scanEl && !scanEl.hidden){ closeScanner(); return true; }
   if (!modal.hidden){ closeModal(); return true; }
   if (!scr.hidden){ closeScreen(); return true; }
@@ -467,7 +468,8 @@ modal.addEventListener('click', function(e){ if (e.target === modal) closeModal(
 // ZXing decoder (zxing.min.js, loaded only when needed, precached by the PWA service worker).
 var SCAN_BTN = '<button class="btn" type="button" data-a="scan">掃條碼</button>';
 var SCAN_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'];
-var scanEl = null, scanState = {engine: '', stream: null, timer: 0, busy: false, gen: 0, last: ''};
+var scanEl = null, scanState = {engine: '', stream: null, timer: 0, busy: false, gen: 0, last: '', paused: false, ignore: '', ignoreSeen: 0, engineObj: null};
+var IGNORE_MS = 2000;   // after OK/否, the same code is ignored while it stays in view and for 2 s after it was last seen
 function digitsOnly(s){ return String(s || '').replace(/\D/g, ''); }
 // UPC-E (8 digits incl. number system + check) -> UPC-A (12 digits)
 function upcEtoA(e){
@@ -502,10 +504,12 @@ function findCode(code, fmt){
 }
 // A code was read: back to the main screen; 1 game -> its info, several -> their list, none -> message.
 function onCode(code, fmt){
-  closeScanner();
-  closeScreen();
   code = String(code || '').trim();
   var idxs = findCode(code, fmt);
+  window.__test.lastCode = {code: code, fmt: fmt || '', matches: idxs.length};
+  if (!idxs.length) { noMatch(code); return; }
+  closeScanner();
+  closeScreen();
   listScroll = 0;
   if (idxs.length === 1){
     codeView = null;
@@ -518,7 +522,41 @@ function onCode(code, fmt){
     renderList(false);
     q.blur();
   }
-  window.__test.lastCode = {code: code, fmt: fmt || '', matches: idxs.length};
+}
+// TEST 8: code not in the database -> in-app dialog over the scanner (decoding paused while it shows).
+// Logged out: 「沒有關於這個條碼的資料」 [OK] -> back to scanning.  Logged in: … 是否要直接使用這個條碼來新增 [否] [是];
+// 否 -> back to scanning, 是 -> 新增遊戲 with the code in 條碼號碼.
+function noMatch(code){
+  if (!scanEl) buildScanner();
+  scanState.paused = true; clearTimeout(scanState.timer);
+  var d = document.getElementById('sdlg'), li = !!auth;
+  d.querySelector('.st').innerHTML = '沒有關於這個條碼的資料' + (li ? '<br>是否要直接使用這個條碼來新增' : '');
+  d.querySelector('.sc').textContent = '條碼：' + code;
+  d.querySelector('.sb').innerHTML = li ? '<button class="btn" type="button" data-d="no">否</button><button class="btn pri" type="button" data-d="yes">是</button>'
+    : '<button class="btn pri" type="button" data-d="ok">OK</button>';
+  d.dataset.code = code;
+  d.hidden = false;
+  window.__test.dialog = {code: code, loggedIn: li};
+}
+function dialogOpen(){ var d = document.getElementById('sdlg'); return !!d && !d.hidden; }
+function hideDialog(){ var d = document.getElementById('sdlg'); if (d) d.hidden = true; }
+function dialogAnswer(a){
+  var d = document.getElementById('sdlg'), code = d.dataset.code || '';
+  hideDialog();
+  if (a === 'yes'){
+    closeScanner();
+    openEdit(null);
+    $('e_barcodes').value = code;
+    return;
+  }
+  // OK / 否: back to the scanner. Ignore this code until it has been out of view for IGNORE_MS.
+  scanState.ignore = code; scanState.ignoreSeen = Date.now();
+  resumeScan();
+}
+function resumeScan(){
+  scanState.paused = false;
+  if (!scanEl || scanEl.hidden) return;
+  if (scanState.engineObj && scanState.stream) { clearTimeout(scanState.timer); loop(scanState.engineObj, document.getElementById('scanv'), scanState.gen); }
 }
 function scanMsg(t, err){ var m = document.getElementById('scanmsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } }
 function buildScanner(){
@@ -528,6 +566,14 @@ function buildScanner(){
     '<div class="shead"><button class="btn" type="button" data-x="back">退回</button><h2>掃條碼</h2></div>' +
     '<div id="scanmsg"></div>';
   document.body.appendChild(scanEl);
+  var dlg = document.createElement('div');   // 「沒有關於這個條碼的資料」 dialog, above the scanner
+  dlg.id = 'sdlg'; dlg.hidden = true;
+  dlg.innerHTML = '<div class="sbox" role="dialog" aria-modal="true"><div class="st"></div><div class="sc"></div><div class="sb"></div></div>';
+  document.body.appendChild(dlg);
+  dlg.addEventListener('click', function(e){
+    var a = e.target.closest ? e.target.closest('[data-d]') : null;
+    if (a) dialogAnswer(a.getAttribute('data-d'));
+  });
   scanEl.addEventListener('click', function(e){
     var b = e.target.closest ? e.target.closest('[data-x]') : null;
     if (b) closeScanner();
@@ -539,7 +585,7 @@ function openScanner(){
   q.blur(); closeModal();
   scanEl.hidden = false;
   var gen = ++scanState.gen;
-  scanState.last = '';
+  scanState.last = ''; scanState.paused = false; scanState.engineObj = null; hideDialog();
   scanMsg('正在開啟相機…');
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ scanMsg('這個裝置無法使用相機掃描', true); return; }
   var video = document.getElementById('scanv');
@@ -552,7 +598,7 @@ function openScanner(){
       return pickEngine().then(function(engine){
         if (gen !== scanState.gen || scanEl.hidden) return;
         if (!engine){ scanMsg('無法載入條碼辨識功能', true); return; }
-        scanState.engine = engine.name;
+        scanState.engine = engine.name; scanState.engineObj = engine;
         scanMsg('將條碼對準框內');
         loop(engine, video, gen);
       });
@@ -569,6 +615,7 @@ function closeScanner(){
   if (!scanEl || scanEl.hidden) return;
   scanState.gen++;
   clearTimeout(scanState.timer);
+  hideDialog(); scanState.paused = false; scanState.ignore = '';
   stopStream(scanState.stream); scanState.stream = null;
   var v = document.getElementById('scanv'); if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; }
   scanEl.hidden = true;
@@ -618,11 +665,17 @@ function zxingEngine(){
   }, function(){ return null; });
 }
 function loop(engine, video, gen){
-  if (gen !== scanState.gen) return;
+  if (gen !== scanState.gen || scanState.paused) return;
+  scanState.frames = (scanState.frames || 0) + 1;
   var p = video.readyState >= 2 ? engine.detect(video) : Promise.resolve(null);
   p.then(function(r){
-    if (gen !== scanState.gen) return;
-    if (r && r.code && validCode(r.code, r.fmt)) { onCode(r.code, r.fmt); return; }
+    if (gen !== scanState.gen || scanState.paused) return;
+    if (r && r.code && scanState.ignore && String(r.code).trim() === scanState.ignore){
+      var now = Date.now();
+      if (now - scanState.ignoreSeen < IGNORE_MS) { scanState.ignoreSeen = now; r = null; }   // still in view: keep ignoring
+      else scanState.ignore = '';
+    }
+    if (r && r.code && validCode(r.code, r.fmt)) { onCode(r.code, r.fmt); if (scanState.paused || scanEl.hidden) return; }
     scanState.timer = setTimeout(function(){ loop(engine, video, gen); }, 120);
   }, function(){ if (gen === scanState.gen) scanState.timer = setTimeout(function(){ loop(engine, video, gen); }, 300); });
 }
@@ -637,7 +690,7 @@ function validCode(c, fmt){
 }
 renderAuth();
 window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); },
-  onCode: onCode, findCode: findCode, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA};
+  onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA};
 renderList(false);
 refresh();
 })();

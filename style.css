@@ -93,3 +93,11 @@ html,body{overscroll-behavior:none}
 @keyframes scanline{from{transform:translateY(-60px)}to{transform:translateY(60px)}}
 #scanmsg{position:absolute;left:16px;right:16px;bottom:calc(48px + env(safe-area-inset-bottom));text-align:center;font-size:17px;color:#fff;text-shadow:0 1px 3px #000}
 #scanmsg.err{color:#ffb3b3}
+/* ---- TEST 8: 「沒有關於這個條碼的資料」 dialog over the scanner ---- */
+#sdlg{position:fixed;inset:0;z-index:45;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+#sdlg[hidden]{display:none}
+#sdlg .sbox{background:var(--bg2);border-radius:14px;padding:20px 18px 16px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.5);color:var(--txt)}
+#sdlg .st{font-size:18px;line-height:1.5;text-align:center}
+#sdlg .sc{font-size:13px;color:var(--sub);text-align:center;margin:8px 0 16px;font-variant-numeric:tabular-nums}
+#sdlg .sb{display:flex;gap:10px}
+#sdlg .sb .btn{flex:1;height:48px;font-size:17px;border-radius:10px}
