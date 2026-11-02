@@ -114,11 +114,12 @@ function renderRec(r){
   return h;
 }
 
-var infoIdx = -1;
+var infoIdx = -1, infoIds = [], infoGone = false;
 function showInfo(idx, keepListScroll){
   if (!keepListScroll && mode === 'list') listScroll = pane.scrollTop;
   mode = 'info'; infoIdx = idx;
   var g = DATA[idx];
+  infoIds = g.r.map(function(r){ return r.id; }).filter(Boolean);
   var h = '<div class="info"><div class="name">' + esc(g.n) + '</div>';
   if (g.r.length === 1) h += '<div class="rec">' + renderRec(g.r[0]) + actsHtml(g.r[0]) + '</div>';
   else for (var i = 0; i < g.r.length; i++)
@@ -184,13 +185,34 @@ function setData(d, src){
   DATA = addKeys(d); SOURCE = src;
   if (codeView) codeView.idxs = findCode(codeView.code);   // indexes changed
   window.__test.data = DATA; window.__test.source = SOURCE;
-  if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }  // info view stays; back re-searches new data
+  if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }
+  else if (mode === 'info') reshowInfo();   // TEST 9: info view follows its records (by id) into the new DATA
+}
+// TEST 9: after new data, re-render the open info screen for the same record ids. If all of them were
+// (soft-)deleted, go back to the list and say so. Returns false when the record is gone.
+function reshowInfo(){
+  var gi = -1;
+  for (var i = 0; i < infoIds.length && gi < 0; i++) gi = groupOf(infoIds[i]);
+  if (gi >= 0){ var st = pane.scrollTop; showInfo(gi, true); pane.scrollTop = st; updateBar(); return true; }
+  infoIdx = -1; infoIds = []; infoGone = true;
+  renderList(true);
+  if (scr.hidden && !rf.busy && !writing) toast('這筆資料已被刪除');   // a 重新整理 press reports it in its own toast
+  return false;
 }
 // Background delta sync on every launch. Cost = number of changed/added/deleted records (min 1 read).
 // Without any `at` (no cache and no bundled snapshot) it downloads everything once.
-function refresh(){
-  if (!window.fetch || !window.SleeveParse) return Promise.resolve();
-  window.__test.refresh = 'checking';
+// TEST 9: at most one query in flight. refresh() (launch / after a write) queues behind a running one so it
+// sees the write; the 重新整理 button just joins a running query (no extra read).
+// Resolves to {ok, changed} (changed = records added/updated/removed locally); never rejects.
+var syncing = null;
+function refresh(join){
+  if (syncing) return join ? syncing : syncing.then(function(){ return refresh(); });
+  var p = syncing = runSync().then(function(r){ syncing = null; return r; }, function(){ syncing = null; return {ok: false, changed: 0}; });
+  return p;
+}
+function runSync(){
+  if (!window.fetch || !window.SleeveParse) return Promise.resolve({ok: false, changed: 0});
+  window.__test.refresh = 'checking'; window.__test.queries = (window.__test.queries || 0) + 1;
   var sq = {from: [{collectionId: 'records'}],
     select: {fields: FIELDS.concat(['deleted', 'updatedAt']).map(function(f){ return {fieldPath: f}; })}};
   var full = !store.at;
@@ -221,7 +243,8 @@ function refresh(){
     if (changed){ setData(SleeveParse.build(toRecs(map)), 'firestore'); window.__test.refresh = 'updated: ' + n + ' docs'; }
     else window.__test.refresh = 'up-to-date';
     window.__test.at = store.at;
-  }).catch(function(e){ window.__test.refresh = 'offline: ' + e.message; });
+    return {ok: true, changed: changed};
+  }).catch(function(e){ window.__test.refresh = 'offline: ' + e.message; return {ok: false, changed: 0}; });
 }
 // ---- TEST 6: accounts + editing. Every write goes through Cloud Functions, which check the codes
 // server-side; the codes are never in this file. Session token kept in localStorage.
@@ -238,13 +261,15 @@ function setAuth(a){
 }
 function renderAuth(){
   authEl.innerHTML = auth
-    ? '<span class="nick">' + esc(auth.nickname) + '</span>' + SCAN_BTN + '<button class="btn" type="button" data-a="logout">登出</button><button class="btn pri" type="button" data-a="add">新增</button>'
-    : SCAN_BTN + '<button class="btn" type="button" data-a="register">註冊</button><button class="btn pri" type="button" data-a="login">登入</button>';
+    ? '<span class="nick">' + esc(auth.nickname) + '</span>' + SCAN_BTN + RF_BTN + '<button class="btn" type="button" data-a="logout">登出</button><button class="btn pri" type="button" data-a="add">新增</button>'
+    : SCAN_BTN + RF_BTN + '<button class="btn" type="button" data-a="register">註冊</button><button class="btn pri" type="button" data-a="login">登入</button>';
+  updRefreshBtn();   // TEST 9: re-apply cooldown state to the freshly rendered button
 }
 authEl.addEventListener('click', function(e){
   var b = e.target.closest ? e.target.closest('[data-a]') : null; if (!b) return;
   var a = b.getAttribute('data-a');
   if (a === 'scan') openScanner();
+  else if (a === 'refresh') pressRefresh();
   else if (a === 'register') openRegister(); else if (a === 'login') openLogin(); else if (a === 'add') openEdit(null);
   else if (a === 'logout') { var t = auth && auth.token; setAuth(null); if (t) callFn('logout', {token: t}).catch(function(){}); }
 });
@@ -421,8 +446,11 @@ function writeFail(e){
   formMsg(errText(e));
 }
 function groupOf(id){ for (var i = 0; i < DATA.length; i++) for (var j = 0; j < DATA[i].r.length; j++) if (DATA[i].r[j].id === id) return i; return -1; }
+var writing = false;   // own add/edit/delete: no 「已被刪除」 toast
 function afterWrite(id, then){
+  writing = true;
   return refresh().then(function(){
+    writing = false;
     closeScreen();
     var gi = id ? groupOf(id) : -1;
     if (then === 'info' && gi >= 0) showInfo(gi, true); else renderList(true);
@@ -688,9 +716,52 @@ function validCode(c, fmt){
   for (var i = 0; i < n - 1; i++) s += (+c[n - 2 - i]) * (i % 2 ? 1 : 3);
   return (10 - s % 10) % 10 === +c[n - 1];
 }
+// ---- TEST 9: 重新整理 button next to 掃條碼. Runs the same delta sync as at launch (one query).
+// UI cooldown: disabled for RF_COOLDOWN ms after the app opens and after each press (monotonic clock).
+var RF_COOLDOWN = 30000;
+var RF_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' +
+  '<path d="M20.5 3.5v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+var RF_BTN = '<button class="btn rf" type="button" data-a="refresh" id="rf" aria-label="重新整理">' + RF_SVG + '<span class="rfn"></span></button>';
+function mono(){ return window.performance && performance.now ? performance.now() : Date.now(); }
+var rf = {until: mono() + RF_COOLDOWN, busy: false, timer: 0};
+function rfLeft(){ return Math.max(0, Math.ceil((rf.until - mono()) / 1000)); }
+function updRefreshBtn(){
+  var b = document.getElementById('rf'); if (!b) return;
+  var left = rfLeft(), off = rf.busy || left > 0;
+  b.disabled = off;
+  b.classList.toggle('spin', rf.busy);
+  b.classList.toggle('cool', !rf.busy && left > 0);
+  b.querySelector('.rfn').textContent = !rf.busy && left > 0 ? left : '';
+  b.setAttribute('aria-label', rf.busy ? '正在更新' : left > 0 ? '重新整理（' + left + ' 秒後可用）' : '重新整理');
+  clearTimeout(rf.timer);
+  if (!rf.busy && left > 0) rf.timer = setTimeout(updRefreshBtn, Math.min(1000, Math.max(50, rf.until - mono() - (left - 1) * 1000 + 5)));
+}
+function pressRefresh(){
+  if (rf.busy || rfLeft() > 0) return;
+  rf.busy = true; rf.until = mono() + RF_COOLDOWN; infoGone = false; updRefreshBtn();
+  var t0 = mono();
+  refresh(true).then(function(r){
+    // keep the icon turning at least ~0.6 s so a fast reply still reads as "checked"
+    setTimeout(function(){
+      rf.busy = false;
+      if (rf.until < mono() + 1) rf.until = mono() + 1;
+      updRefreshBtn();
+      if (!r || !r.ok) toast('無法連線，請稍後再試');
+      else if (!r.changed) toast('已是最新資料');
+      else toast('已更新 ' + r.changed + ' 筆資料' + (infoGone ? '，這筆資料已被刪除' : ''));
+    }, Math.max(0, 600 - (mono() - t0)));
+  });
+}
+var toastEl = null, toastTimer = 0;
+function toast(t){
+  if (!toastEl){ toastEl = document.createElement('div'); toastEl.id = 'toast'; toastEl.setAttribute('role', 'status'); document.body.appendChild(toastEl); }
+  toastEl.textContent = t; toastEl.classList.add('on');
+  window.__test.toast = t;
+  clearTimeout(toastTimer); toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, 2200);
+}
 renderAuth();
 window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); },
-  onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA};
+  onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA, rf: rf, pressRefresh: pressRefresh};
 renderList(false);
 refresh();
 })();
