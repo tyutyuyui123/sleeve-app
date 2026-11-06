@@ -132,3 +132,9 @@ html,body{overscroll-behavior:none}
 #brchips .chip:active{background:rgba(255,255,255,.14)}
 .brmore{text-align:center;color:var(--sub);font-size:13px;padding:14px 0 8px}
 @media (max-width:380px){#brui .brrow{gap:6px}#brchips .chip{padding:0 8px;font-size:12px}}
+
+/* ---- v1.0.1: 返回 next to game name (from 瀏覽全部) ---- */
+.info .namerow{display:flex;align-items:flex-start;gap:10px;margin:4px 0 14px}
+.info .namerow .name{flex:1;min-width:0;margin:0}
+.info .namerow .btn.nbr{flex:none;height:36px;padding:0 12px;margin-top:2px;align-self:flex-start}
+@media (max-width:380px){.info .namerow{gap:8px}.info .namerow .btn.nbr{padding:0 10px;font-size:14px}}

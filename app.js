@@ -137,7 +137,9 @@ function showInfo(idx, keepListScroll){
   syncTop();
   var g = DATA[idx];
   infoIds = g.r.map(function(r){ return r.id; }).filter(Boolean);
-  var h = '<div class="info"><div class="name">' + esc(g.n) + '</div>';
+  // v1.0.1: from 瀏覽全部 → 返回 button on the right of the name (keeps filter / scroll / shown)
+  var h = '<div class="info"><div class="namerow"><div class="name">' + esc(g.n) + '</div>' +
+    (browseFrom ? '<button class="btn nbr" type="button" data-act="back">返回</button>' : '') + '</div>';
   if (g.r.length === 1) h += '<div class="rec">' + renderRec(g.r[0]) + actsHtml(g.r[0]) + '</div>';
   else for (var i = 0; i < g.r.length; i++)
     h += '<div class="rec"><div class="rech' + (i ? '' : ' first') + '">資料 ' + (i + 1) + ' / ' + g.r.length + (g.r[i].row < 100000 ? '（表格第 ' + g.r[i].row + ' 列）' : '') + '</div>' + renderRec(g.r[i]) + actsHtml(g.r[i]) + '</div>';
@@ -157,7 +159,10 @@ pane.addEventListener('click', function(e){
   var t = e.target.closest ? e.target.closest('.item') : null;
   if (t) { showInfo(+t.getAttribute('data-i')); return; }
   var b = e.target.closest ? e.target.closest('[data-act]') : null;
-  if (b && auth) { if (b.getAttribute('data-act') === 'edit') openEdit(b.getAttribute('data-id')); else askDelete(b.getAttribute('data-id')); }
+  if (!b) return;
+  var act = b.getAttribute('data-act');
+  if (act === 'back'){ openBrowse(true); return; }   // v1.0.1: info → 瀏覽全部 (same place)
+  if (auth) { if (act === 'edit') openEdit(b.getAttribute('data-id')); else if (act === 'del') askDelete(b.getAttribute('data-id')); }
 });
 
 // Always-visible custom scrollbar (Android WebView hides native ones).
@@ -476,7 +481,7 @@ function afterWrite(id, then){
     closeScreen();
     var gi = id ? groupOf(id) : -1;
     if (then === 'info' && gi >= 0) showInfo(gi, true);
-    else if (browsing || browseFrom) openBrowse(false);
+    else if (browsing || browseFrom) openBrowse(true);   // v1.0.1: keep filter / scroll / shown (deleted → nearby)
     else renderList(true);
   });
 }
@@ -799,6 +804,7 @@ function openBrowse(keepScroll){
   syncTop();
   rebuildBrowseIdxs();
   if (!keepScroll) br.shown = Math.min(BR_PAGE, br.idxs.length);
+  else if (br.shown > br.idxs.length) br.shown = br.idxs.length;
   renderBrowsePane(!!keepScroll);
   q.blur();
   try { window.getSelection().removeAllRanges(); } catch (e) {}
@@ -899,7 +905,8 @@ function toast(t){
 renderAuth();
 window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); },
   onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA, rf: rf, pressRefresh: pressRefresh,
-  openBrowse: openBrowse, closeBrowse: closeBrowse, br: br, applyBrowseFilter: applyBrowseFilter, browsing: function(){ return browsing; }, mode: function(){ return mode; }};
+  openBrowse: openBrowse, closeBrowse: closeBrowse, br: br, applyBrowseFilter: applyBrowseFilter, browsing: function(){ return browsing; }, mode: function(){ return mode; },
+  browseFrom: function(){ return browseFrom; }, browseScroll: function(){ return browseScroll; }, setBrowseScroll: function(v){ browseScroll = v; }};
 renderList(false);
 refresh();
 })();
