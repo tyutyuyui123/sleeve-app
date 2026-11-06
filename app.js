@@ -33,7 +33,8 @@ var DATA = [];
   try { DATA = SleeveParse.build(toRecs(store.map)); } catch (e) { DATA = []; }
 })();
 var q = document.getElementById('q'), pane = document.getElementById('pane'),
-    clr = document.getElementById('clr'), track = document.getElementById('track'), thumb = document.getElementById('thumb');
+    clr = document.getElementById('clr'), track = document.getElementById('track'), thumb = document.getElementById('thumb'),
+    brOpen = document.getElementById('brOpen'), brui = document.getElementById('brui'), brq = document.getElementById('brq'), brclr = document.getElementById('brclr');
 
 function norm(s){
   s = String(s || '');
@@ -46,6 +47,10 @@ addKeys(DATA);
 function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
 var mode = 'list', listScroll = 0, lastResults = [];
+// v1.0: 瀏覽全部 (local list of every non-deleted game; no Firestore reads)
+var browsing = false, browseScroll = 0, browseFrom = false;
+var BR_PAGE = 80;
+var br = {filter: 'all', q: '', idxs: [], shown: 0};
 
 function search(text){
   var k = norm(text);
@@ -59,8 +64,16 @@ function search(text){
 }
 
 var codeView = null;   // {code, idxs}: result of the last scan, shown while the search box is empty
+function syncTop(){
+  var isBr = mode === 'browse';
+  if (brOpen) brOpen.hidden = isBr || mode === 'info';
+  if (document.getElementById('box')) document.getElementById('box').hidden = isBr;
+  if (brui) brui.hidden = !isBr;
+}
 function renderList(keepScroll){
+  browsing = false; browseFrom = false;
   mode = 'list';
+  syncTop();
   var text = q.value;
   clr.hidden = !text;
   lastResults = search(text);
@@ -116,8 +129,12 @@ function renderRec(r){
 
 var infoIdx = -1, infoIds = [], infoGone = false;
 function showInfo(idx, keepListScroll){
-  if (!keepListScroll && mode === 'list') listScroll = pane.scrollTop;
+  if (!keepListScroll){
+    if (mode === 'list') listScroll = pane.scrollTop;
+    else if (mode === 'browse'){ browseScroll = pane.scrollTop; browseFrom = true; }
+  }
   mode = 'info'; infoIdx = idx;
+  syncTop();
   var g = DATA[idx];
   infoIds = g.r.map(function(r){ return r.id; }).filter(Boolean);
   var h = '<div class="info"><div class="name">' + esc(g.n) + '</div>';
@@ -161,7 +178,11 @@ window.onBack = function(){
   if (scanEl && !scanEl.hidden){ closeScanner(); return true; }
   if (!modal.hidden){ closeModal(); return true; }
   if (!scr.hidden){ closeScreen(); return true; }
-  if (mode === 'info'){ renderList(true); return true; }
+  if (mode === 'info'){
+    if (browseFrom || browsing){ openBrowse(true); return true; }
+    renderList(true); return true;
+  }
+  if (mode === 'browse'){ closeBrowse(); return true; }
   return false;
 };
 function fsVal(v){
@@ -186,6 +207,7 @@ function setData(d, src){
   if (codeView) codeView.idxs = findCode(codeView.code);   // indexes changed
   window.__test.data = DATA; window.__test.source = SOURCE;
   if (mode === 'list'){ var st = pane.scrollTop; renderList(false); pane.scrollTop = st; updateBar(); }
+  else if (mode === 'browse'){ var st2 = pane.scrollTop; openBrowse(true); pane.scrollTop = st2; updateBar(); }
   else if (mode === 'info') reshowInfo();   // TEST 9: info view follows its records (by id) into the new DATA
 }
 // TEST 9: after new data, re-render the open info screen for the same record ids. If all of them were
@@ -195,7 +217,7 @@ function reshowInfo(){
   for (var i = 0; i < infoIds.length && gi < 0; i++) gi = groupOf(infoIds[i]);
   if (gi >= 0){ var st = pane.scrollTop; showInfo(gi, true); pane.scrollTop = st; updateBar(); return true; }
   infoIdx = -1; infoIds = []; infoGone = true;
-  renderList(true);
+  if (browsing || browseFrom) openBrowse(true); else renderList(true);
   if (scr.hidden && !rf.busy && !writing) toast('這筆資料已被刪除');   // a 重新整理 press reports it in its own toast
   return false;
 }
@@ -453,7 +475,9 @@ function afterWrite(id, then){
     writing = false;
     closeScreen();
     var gi = id ? groupOf(id) : -1;
-    if (then === 'info' && gi >= 0) showInfo(gi, true); else renderList(true);
+    if (then === 'info' && gi >= 0) showInfo(gi, true);
+    else if (browsing || browseFrom) openBrowse(false);
+    else renderList(true);
   });
 }
 function askDelete(id){
@@ -716,6 +740,119 @@ function validCode(c, fmt){
   for (var i = 0; i < n - 1; i++) s += (+c[n - 2 - i]) * (i % 2 ? 1 : 3);
   return (10 - s % 10) % 10 === +c[n - 1];
 }
+
+// ---- v1.0: 瀏覽全部 — local-only list of every game (sorted by name), with filters + lazy pages.
+function gameFlags(g){
+  var hasBc = false, hasSl = false;
+  for (var i = 0; i < g.r.length; i++){
+    var r = g.r[i];
+    if (r.bc && r.bc.length) hasBc = true;
+    if (r.none || (r.items && r.items.length)) hasSl = true;
+  }
+  return {bc: hasBc, sl: hasSl};
+}
+function browseMatch(g, f, qk){
+  if (qk && g.k.indexOf(qk) < 0) return false;
+  if (f === 'all') return true;
+  var fl = gameFlags(g);
+  if (f === 'bc1') return fl.bc;
+  if (f === 'bc0') return !fl.bc;
+  if (f === 'sl1') return fl.sl;
+  if (f === 'sl0') return !fl.sl;
+  return true;
+}
+function rebuildBrowseIdxs(){
+  var qk = norm(br.q), f = br.filter, order = [], out = [];
+  for (var i = 0; i < DATA.length; i++) order.push(i);
+  order.sort(function(a, b){ var x = DATA[a].k, y = DATA[b].k; return x < y ? -1 : x > y ? 1 : 0; });
+  for (var j = 0; j < order.length; j++){
+    var ix = order[j];
+    if (browseMatch(DATA[ix], f, qk)) out.push(ix);
+  }
+  br.idxs = out;
+}
+function paintBrowseItems(from, to){
+  var h = '';
+  for (var j = from; j < to; j++)
+    h += '<div class="item" data-i="' + br.idxs[j] + '">' + esc(DATA[br.idxs[j]].n.replace(/\n/g, ' ')) + '</div>';
+  return h;
+}
+function renderBrowsePane(keepScroll){
+  var total = br.idxs.length;
+  if (!br.shown || br.shown < BR_PAGE) br.shown = Math.min(BR_PAGE, total);
+  if (br.shown > total) br.shown = total;
+  var h = '<div class="count">共 ' + total + ' 筆' + (br.filter !== 'all' || norm(br.q) ? '（已篩選）' : '') + '</div>';
+  if (!total) h += '<div class="empty">沒有符合的桌遊</div>';
+  else {
+    h += paintBrowseItems(0, br.shown);
+    if (br.shown < total) h += '<div class="brmore">下滑載入更多（已顯示 ' + br.shown + ' / ' + total + '）</div>';
+  }
+  pane.innerHTML = h;
+  pane.scrollTop = keepScroll ? browseScroll : 0;
+  updateBar();
+}
+function openBrowse(keepScroll){
+  browsing = true; browseFrom = true; mode = 'browse';
+  if (brq) brq.value = br.q;
+  if (brclr) brclr.hidden = !br.q;
+  syncChips();
+  syncTop();
+  rebuildBrowseIdxs();
+  if (!keepScroll) br.shown = Math.min(BR_PAGE, br.idxs.length);
+  renderBrowsePane(!!keepScroll);
+  q.blur();
+  try { window.getSelection().removeAllRanges(); } catch (e) {}
+}
+function closeBrowse(){
+  browsing = false; browseFrom = false; browseScroll = 0;
+  br.q = ''; br.filter = 'all'; br.shown = 0; br.idxs = [];
+  if (brq) brq.value = '';
+  if (brclr) brclr.hidden = true;
+  syncChips();
+  renderList(false);
+}
+function syncChips(){
+  if (!brui) return;
+  var chips = brui.querySelectorAll('#brchips .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('on', chips[i].getAttribute('data-f') === br.filter);
+}
+function applyBrowseFilter(f){
+  if (f === br.filter) return;
+  br.filter = f; br.shown = 0; browseScroll = 0;
+  syncChips(); rebuildBrowseIdxs(); renderBrowsePane(false);
+}
+function applyBrowseQuery(){
+  br.q = brq ? brq.value : '';
+  if (brclr) brclr.hidden = !br.q;
+  br.shown = 0; browseScroll = 0;
+  rebuildBrowseIdxs(); renderBrowsePane(false);
+}
+function maybeLoadMore(){
+  if (mode !== 'browse') return;
+  if (br.shown >= br.idxs.length) return;
+  var sh = pane.scrollHeight, ch = pane.clientHeight, st = pane.scrollTop;
+  if (st + ch < sh - 200) return;
+  var prev = br.shown;
+  br.shown = Math.min(br.shown + BR_PAGE, br.idxs.length);
+  browseScroll = st;
+  // append without full re-render of earlier items: rebuild is fine at this scale for one page
+  renderBrowsePane(true);
+  window.__test.browseShown = br.shown;
+}
+if (brOpen) brOpen.addEventListener('click', function(){ openBrowse(false); });
+if (brui) brui.addEventListener('click', function(e){
+  var b = e.target.closest ? e.target.closest('[data-b]') : null;
+  if (b && b.getAttribute('data-b') === 'back'){ closeBrowse(); return; }
+  var c = e.target.closest ? e.target.closest('[data-f]') : null;
+  if (c) applyBrowseFilter(c.getAttribute('data-f'));
+});
+if (brq){
+  brq.addEventListener('input', function(){ applyBrowseQuery(); });
+  brq.addEventListener('keydown', function(e){ if (e.key === 'Enter') brq.blur(); });
+}
+if (brclr) brclr.addEventListener('click', function(){ if (brq) brq.value = ''; applyBrowseQuery(); brq && brq.focus(); });
+pane.addEventListener('scroll', function(){ if (mode === 'browse'){ browseScroll = pane.scrollTop; maybeLoadMore(); } }, {passive: true});
+
 // ---- TEST 9: 重新整理 button next to 掃條碼. Runs the same delta sync as at launch (one query).
 // UI cooldown: disabled for RF_COOLDOWN ms after the app opens and after each press (monotonic clock).
 var RF_COOLDOWN = 30000;
@@ -761,7 +898,8 @@ function toast(t){
 }
 renderAuth();
 window.__test = {showInfo: showInfo, search: search, data: DATA, source: SOURCE, doRefresh: function(){ return refresh(); },
-  onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA, rf: rf, pressRefresh: pressRefresh};
+  onCode: onCode, findCode: findCode, dialogAnswer: dialogAnswer, openScanner: openScanner, closeScanner: closeScanner, scan: scanState, validCode: validCode, upcEtoA: upcEtoA, rf: rf, pressRefresh: pressRefresh,
+  openBrowse: openBrowse, closeBrowse: closeBrowse, br: br, applyBrowseFilter: applyBrowseFilter, browsing: function(){ return browsing; }, mode: function(){ return mode; }};
 renderList(false);
 refresh();
 })();

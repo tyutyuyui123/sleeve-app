@@ -23,6 +23,23 @@
       <input id="q" type="text" placeholder="請輸入桌遊名稱" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
       <button id="clr" type="button" aria-label="清除" hidden>×</button>
     </div>
+    <button id="brOpen" type="button" class="bro">瀏覽全部</button>
+    <div id="brui" hidden>
+      <div class="brrow">
+        <button class="btn" type="button" data-b="back" id="brBack">退回</button>
+        <div class="brin">
+          <input id="brq" type="text" placeholder="在列表中篩選名稱" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+          <button id="brclr" type="button" aria-label="清除" hidden>×</button>
+        </div>
+      </div>
+      <div id="brchips" role="toolbar" aria-label="篩選">
+        <button type="button" class="chip on" data-f="all">全部</button>
+        <button type="button" class="chip" data-f="bc1">有條碼</button>
+        <button type="button" class="chip" data-f="bc0">無條碼</button>
+        <button type="button" class="chip" data-f="sl1">有牌套</button>
+        <button type="button" class="chip" data-f="sl0">無牌套</button>
+      </div>
+    </div>
   </div>
   <div id="paneWrap">
     <div id="pane"></div>
@@ -31,7 +48,7 @@
 </div>
 <div id="scr" hidden></div>
 <div id="modal" hidden><div id="mbox"><input id="mcode" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"><button id="mok" type="button">OK</button></div></div>
-<div id="ver">TEST 9</div>
+<div id="ver">v1.0</div>
 <script src="data.js"></script>
 <script src="sleeveparse.js"></script>
 <script src="app.js"></script>
